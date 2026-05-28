@@ -1,0 +1,185 @@
+# Master Prompt — Interactive 3D CPU Simulation
+
+> Paste everything below this line into Opus 4.8.
+
+---
+
+## 1. Role & Mission
+
+You are a senior computer-architecture engineer **and** an expert 3D web developer. Build a complete, interactive, **3D simulation of how a modern CPU works** — at a level of technical accuracy that lets a non-specialist user confidently discuss the design with a PhD in Electrical & Computer Engineering.
+
+This is not a cartoon. Every animation must map to a **real, defensible microarchitectural mechanism**. If a simplification is unavoidable, label it explicitly in the UI as a simplification and state what the real hardware does.
+
+**Primary goals (in priority order):**
+1. **Correctness** — terminology, data flow, and timing must be technically accurate.
+2. **Visibility** — the user can *see* data physically move through the datapath, cycle by cycle.
+3. **Pedagogy** — every component has an explanation using correct vocabulary the user can repeat to an expert.
+4. **Interactivity** — the user controls the clock, writes programs, and inspects internal state.
+
+---
+
+## 2. Technology Stack
+
+- **React** + **Vite** (TypeScript).
+- **Three.js** via **React Three Fiber** (`@react-three/fiber`) and **`@react-three/drei`** (OrbitControls, Html labels, Text, Line, etc.).
+- **Zustand** (or equivalent) for global simulation state.
+- **CRITICAL ARCHITECTURAL RULE:** the **simulation engine must be a pure, framework-agnostic TypeScript module**, completely decoupled from rendering. The engine advances state by discrete clock cycles and emits a serializable snapshot of the entire machine state each cycle. Three.js only *renders snapshots* — it never contains simulation logic. This separation is mandatory so the simulation stays cycle-accurate and testable.
+- Write unit tests for the engine (e.g. Vitest): verify known instruction sequences produce correct register/memory/cache states.
+
+---
+
+## 3. The Concrete ISA
+
+Implement a subset of **RISC-V RV32I** (32-bit integer base). It is the modern academic standard and a PhD will recognize it instantly. Support at minimum:
+
+- **Arithmetic/Logic:** `add`, `sub`, `and`, `or`, `xor`, `sll`, `srl`, `sra`, `slt`, `addi`, `andi`, `ori`, `xori`, `slli`, `srli`.
+- **Memory:** `lw`, `sw`, `lb`, `sb` (byte + word load/store).
+- **Control flow:** `beq`, `bne`, `blt`, `bge`, `jal`, `jalr`.
+- **Upper immediate:** `lui`, `auipc`.
+
+Show, for each instruction, its **machine encoding** and **instruction format** (R-type, I-type, S-type, B-type, U-type, J-type) with the bit-field breakdown (opcode / rd / funct3 / rs1 / rs2 / funct7 / immediate). Let the user toggle between assembly, hex, and binary views of the current instruction.
+
+---
+
+## 4. Microarchitecture to Model
+
+Implement a **classic 5-stage in-order pipeline** as the default view (this is the canonical teaching model). Stages:
+
+1. **IF** — Instruction Fetch: PC → instruction memory / I-cache → Instruction Register; PC increment / branch target mux.
+2. **ID** — Instruction Decode + Register Read: decode fields, read the **register file** (two read ports), sign-extend the immediate, compute branch decision logic.
+3. **EX** — Execute: the **ALU** performs the operation; effective address computation for loads/stores; branch target adder.
+4. **MEM** — Memory Access: read/write the **data cache** (D-cache) → main memory on miss.
+5. **WB** — Write Back: result mux (ALU result vs. loaded data) written to the register file.
+
+Model and render the **pipeline registers** between stages (IF/ID, ID/EX, EX/MEM, MEM/WB) as physical latches that capture state on the clock edge.
+
+### Datapath elements to render as distinct 3D objects
+- Program Counter (PC) register and the PC-update mux.
+- Instruction memory / Instruction cache.
+- Register file (32 registers `x0`–`x31`; `x0` hard-wired to 0 — show this).
+- Immediate generator / sign-extension unit.
+- ALU (see §5 for internals).
+- Data cache + main memory (see §6).
+- Control Unit and the **control signals** it produces (RegWrite, ALUSrc, MemRead, MemWrite, MemtoReg, Branch, ALUOp, etc.) — render the control lines and show them asserting/de-asserting.
+- All **muxes** as visible selectors, and the **buses** connecting everything.
+
+### Hazards (must be modeled and visualized)
+- **Data hazards:** RAW dependencies; implement and animate **forwarding/bypassing** (EX/MEM → EX, MEM/WB → EX). When forwarding can't resolve it (load-use hazard), insert and visualize a **stall / bubble**.
+- **Control hazards:** branch resolution; show the **pipeline flush** of wrongly-fetched instructions. Include a simple, toggleable **branch predictor** (start with static "predict not-taken," then offer a 1-bit or 2-bit dynamic predictor) and visualize misprediction penalty.
+- **Structural hazards:** explain when/why they'd occur and how separate I-cache and D-cache avoid one.
+
+Provide a hazard panel that names each hazard as it happens using correct terminology (e.g. "Load-use data hazard — 1-cycle stall inserted").
+
+---
+
+## 5. ALU & Arithmetic (show the *internals*)
+
+The user must understand how arithmetic physically happens, not just "the ALU adds."
+
+- Numbers are stored in **two's complement**; visualize the bit pattern and show how subtraction = addition of the negated operand.
+- **Adder internals:** start by visualizing a **ripple-carry adder** (full-adders chained, carry propagating bit-by-bit), then offer a **carry-lookahead adder** view and explain the critical-path / delay difference. Animate the carry propagation.
+- **Logic ops:** AND/OR/XOR shown as bitwise lanes.
+- **Shifter:** barrel shifter concept for `sll`/`srl`/`sra`.
+- **Multiplication (extension view):** visualize **Booth's algorithm** and mention Wallace-tree reduction for fast multipliers.
+- **Flags/status:** zero flag, sign, carry-out, overflow — show how overflow is detected in two's complement.
+- **Optional FPU module:** IEEE 754 single-precision layout (sign / 8-bit exponent / 23-bit mantissa), and the steps of FP addition (align exponents → add mantissas → normalize → round).
+
+For each ALU operation, highlight the exact sub-circuit that activates and show the operand bits flowing in and the result bits flowing out.
+
+---
+
+## 6. Memory Hierarchy & Cache (the centerpiece — model in depth)
+
+Render the full hierarchy as physical layers with **realistic relative latency and size labels**:
+
+`Registers → L1 (split I-cache + D-cache) → L2 → L3 → Main Memory (DRAM) → (optional) Disk`
+
+### Cache mechanics to implement and visualize
+- **Organization:** support **direct-mapped**, **N-way set-associative**, and **fully-associative** — user-switchable. Show how the same address maps differently under each.
+- **Address decomposition:** for every memory access, break the address into **Tag | Index | Block-Offset** and animate the index selecting a set, the tag comparison (comparators lighting up), and the offset selecting the byte within the block.
+- **Cache line / block:** show a block holding multiple words; demonstrate **spatial locality** (one miss brings in neighbors) and **temporal locality** (recently used stays resident).
+- **Hit vs. miss:** animate the hit path (fast, green) vs. the miss path (walks down to the next level, slow, red), and update a live **hit-rate / miss-rate** counter and an estimated **average memory access time (AMAT)**.
+- **Replacement policies:** **LRU**, **FIFO**, **Random** (user-selectable); visualize the LRU recency ordering and which line gets evicted.
+- **Write policies:** **write-through vs. write-back** (show the dirty bit), and **write-allocate vs. no-write-allocate**. Animate a dirty-line write-back to the lower level on eviction.
+- **Valid / dirty / tag bits** per line — render them and update them live.
+- **Multicore coherence (advanced, toggleable):** add a 2-core view and implement the **MESI** protocol (Modified / Exclusive / Shared / Invalid). Visualize state transitions on a shared bus when one core writes a line another core holds (snooping, invalidation).
+
+Every cache event must print a plain-language line using correct terms, e.g. *"D-cache read miss → fetched 64-byte block from L2 (≈12-cycle penalty) → evicted LRU line in set 3 (dirty → written back)."*
+
+---
+
+## 7. Clock & Timing
+
+- A visible **clock signal** (square wave) driving the whole machine; everything updates on the clock edge.
+- The user controls the clock: **single-step one cycle**, **run/pause**, and a **speed slider** (from very slow for study up to fast).
+- Show the current **cycle count** and **instruction count**, and compute live **CPI (cycles per instruction)** and effective throughput.
+- Briefly explain **critical path** and how it bounds the maximum clock frequency.
+
+---
+
+## 8. 3D Visualization Requirements
+
+- A clear, navigable 3D scene (OrbitControls: rotate / pan / zoom). Components laid out spatially like a floorplan with labeled buses connecting them.
+- **Data-in-motion:** animate moving packets/pulses along buses to represent data and control signals traveling between units on each cycle. Color-code: data buses, control signals, clock, and the active vs. idle paths.
+- **Highlighting:** the currently active stage/component glows; inactive parts dim. The user always knows where "the action" is this cycle.
+- **Click-to-inspect:** clicking any component opens a panel with (a) its name, (b) a precise technical description, (c) its current internal state/values, and (d) what it's doing *this specific cycle*.
+- **Camera presets / guided tour:** buttons that fly the camera to the pipeline, the ALU, or the cache hierarchy.
+- Performance: keep it smooth; use instancing where many identical objects exist (e.g. register cells, cache lines). Target 60 fps.
+- Visual design: clean, modern, dark technical theme; legible labels (use `drei`'s `Html`/`Text`); a legend explaining the color coding.
+
+---
+
+## 9. Interactivity & User Controls
+
+- **Program editor:** a small RISC-V assembly editor with several preloaded example programs:
+  1. A simple arithmetic loop (sum 1..N) — shows the pipeline + ALU.
+  2. A program with a **load-use hazard** — shows a stall.
+  3. A program with a **branch** — shows prediction + flush.
+  4. An array-traversal program — shows **cache locality**, hits/misses, and replacement.
+- An **assembler** that turns the assembly into machine code (and surfaces errors clearly).
+- Live, always-visible state panels: **register file** (all 32 regs, highlight ones written this cycle), **pipeline diagram** (which instruction is in each stage, with stalls/bubbles marked), **cache contents** (sets, lines, tag/valid/dirty bits), and a slice of **main memory**.
+- A **timeline / pipeline diagram view** (the classic stage-vs-cycle chart) synced to the 3D scene.
+- Toggles for: forwarding on/off, branch predictor type, cache associativity, replacement policy, write policy, single vs. dual core.
+
+---
+
+## 10. Explanation Layer (so the user can talk to a PhD)
+
+- Each component panel includes a **"Talk like an expert"** note: 1–3 sentences of precise phrasing the user can reuse, plus the key terms (e.g. "bypass network," "structural hazard," "write-back with write-allocate," "victim line," "snooping coherence").
+- A **glossary** of every term used in the app with a one-line accurate definition.
+- An optional **narration mode** that, as the simulation runs, describes each cycle in correct technical language.
+- Where you simplify, add a small **"Real hardware does X"** footnote so the user isn't misled.
+
+---
+
+## 11. Code Quality
+
+- TypeScript throughout, strict mode. Clear module boundaries: `engine/` (pure simulation), `scene/` (R3F components), `ui/` (panels/controls), `isa/` (assembler + encodings), `state/` (store).
+- Well-named, commented code; the engine especially should read like a reference implementation.
+- Engine unit tests covering: arithmetic correctness, forwarding vs. stall behavior, branch flush, and cache hit/miss/eviction/write-back sequences for known address patterns.
+- A `README` explaining the architecture, the engine/render split, how to run, and the accuracy assumptions/simplifications made.
+
+---
+
+## 12. Suggested Build Order (do not skip the engine-first step)
+
+1. **Engine core:** register file, memory, single-cycle execution of the ISA, with tests. *(No 3D yet.)*
+2. Add the **5-stage pipeline + pipeline registers** to the engine; add hazard detection, forwarding, stalls, branch handling; test.
+3. Add the **cache subsystem** to the engine (start direct-mapped write-back, then generalize); test hit/miss/eviction.
+4. Build the **3D scene** that renders engine snapshots; wire up clock controls.
+5. Add **data-flow animations**, click-to-inspect, and the state panels.
+6. Add the **explanation layer**, glossary, presets, and advanced toggles (associativity, predictors, MESI dual-core).
+7. Polish visuals, performance, and the README.
+
+---
+
+## 13. Acceptance Criteria
+
+The project is done when a user can:
+- Load a program, single-step it, and **watch each instruction physically traverse all five pipeline stages**, with correct values updating in the register file and memory.
+- **See and correctly name** a data hazard being resolved by forwarding, a load-use stall, and a branch misprediction flush.
+- Switch cache to set-associative, run the array program, and **watch tag/index/offset decoding, a miss walking down the hierarchy, an LRU eviction, and a dirty write-back**, with the live hit-rate updating.
+- Open any component and read an accurate, expert-level explanation of what it does.
+- Come away able to explain — out loud, with correct vocabulary — the fetch-decode-execute cycle, pipelining and hazards, how the ALU adds in two's complement, and how the cache hierarchy and a set-associative lookup work.
+
+**Now build it. Start with the engine and its tests, confirm correctness, then layer on the 3D visualization. Ask me clarifying questions only if a requirement is genuinely ambiguous; otherwise make sensible, defensible architectural choices and proceed.**
