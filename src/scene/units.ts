@@ -1,6 +1,6 @@
-// Layout + documentation for each datapath block. Shared by the 3D scene
-// (which reads pos/size/color) and the inspector panel (which reads the
-// descriptions). Positions are in world units on the z=0 plane.
+// Layout and documentation for every datapath block.
+// Positions follow a left-to-right 5-stage pipeline floor plan.
+// x-axis = pipeline direction  y-axis = height  z-axis = depth
 
 export type Vec3 = [number, number, number];
 
@@ -10,50 +10,59 @@ export interface UnitMeta {
   pos: Vec3;
   size: Vec3;
   color: string;
-  blurb: string;   // what it is / does
-  expert: string;  // phrasing you can repeat to someone who knows the field
+  stage: 'IF' | 'ID' | 'EX' | 'MEM' | 'WB';
+  blurb: string;
+  expert: string;
 }
 
 export const UNITS: Record<string, UnitMeta> = {
   pc: {
-    id: 'pc', label: 'PC', pos: [-9, 0, 0], size: [1.2, 1.0, 0.8], color: '#3b82f6',
-    blurb: 'The program counter holds the byte address of the instruction being fetched. By default it advances by 4 each cycle; branches and jumps overwrite it through the PC mux.',
-    expert: 'The PC is sequenced by a mux selecting between PC+4 and a computed branch/jump target.',
+    id: 'pc', label: 'PC', stage: 'IF',
+    pos: [-11, 0, 0], size: [1.4, 0.7, 1.2], color: '#3b82f6',
+    blurb: 'The Program Counter holds the byte address of the instruction being fetched. Each cycle it advances by 4; branches and jumps overwrite it through the PC mux.',
+    expert: 'The PC is sequenced by a 2-input mux selecting between PC+4 and a computed branch/jump target. In a pipelined machine the branch target is resolved in the EX or MEM stage, creating a control hazard.',
   },
   imem: {
-    id: 'imem', label: 'Instr Mem', pos: [-6.3, 0, 0], size: [1.8, 1.2, 0.8], color: '#6366f1',
-    blurb: 'Instruction memory (an I-cache in real hardware) returns the 32-bit instruction word at the PC. Kept separate from data memory so fetch and load/store do not compete for one port.',
-    expert: 'Splitting the I-cache from the D-cache removes the structural hazard a unified single-ported memory would create.',
+    id: 'imem', label: 'I-Cache', stage: 'IF',
+    pos: [-8.5, 0, 0], size: [2.2, 0.7, 1.6], color: '#6366f1',
+    blurb: 'Instruction memory (an L1 I-cache in real hardware) returns the 32-bit instruction word addressed by the PC. It is kept separate from data memory to avoid structural hazards.',
+    expert: 'Splitting I-cache from D-cache removes the structural hazard that a single-ported unified memory would impose on the fetch and memory stages simultaneously.',
   },
   control: {
-    id: 'control', label: 'Control', pos: [-3, 2.4, 0], size: [1.8, 1.0, 0.8], color: '#f59e0b',
-    blurb: 'The control unit decodes the opcode and funct fields into the control signals that steer the rest of the datapath: RegWrite, ALUSrc, MemRead, MemWrite, MemtoReg, Branch, and the ALU operation.',
-    expert: 'Control derives the datapath select/enable lines from opcode + funct3/funct7.',
+    id: 'control', label: 'Control', stage: 'ID',
+    pos: [-4, 2.9, 0], size: [2.2, 0.7, 1.4], color: '#f59e0b',
+    blurb: 'The control unit decodes the opcode and funct fields into the signals that steer the datapath: RegWrite, ALUSrc, MemRead, MemWrite, MemtoReg, Branch, and ALUOp.',
+    expert: 'Control is purely combinational — it maps opcode+funct3+funct7 to the set of datapath enable/select lines. In a real design these become the bits loaded into the ID/EX pipeline register.',
   },
   regs: {
-    id: 'regs', label: 'Register File', pos: [-3, 0, 0], size: [1.9, 1.3, 0.8], color: '#10b981',
-    blurb: '32 integer registers x0..x31 with two read ports and one write port. x0 is hard-wired to zero. Operands are read here in decode; the write-back result lands here at the end of the cycle.',
-    expert: 'A 2-read/1-write register file; x0 reads as a constant zero regardless of writes.',
+    id: 'regs', label: 'Register File', stage: 'ID',
+    pos: [-4, 0, 0], size: [2.4, 0.7, 2.4], color: '#10b981',
+    blurb: '32 × 32-bit integer registers x0–x31 with two asynchronous read ports and one synchronous write port. x0 is hard-wired to zero; writes to it are silently discarded.',
+    expert: 'A 2R/1W register file. x0 is a constant-zero source, not a register. The write port is gated by RegWrite and the write-back clock edge. RAW hazards arise when a subsequent instruction reads a register not yet written back.',
   },
   imm: {
-    id: 'imm', label: 'Imm Gen', pos: [-3, -2.3, 0], size: [1.6, 1.0, 0.8], color: '#14b8a6',
-    blurb: 'The immediate generator extracts and sign-extends the immediate from the instruction according to its format (I, S, B, U, J). The bits sit in different places in each format.',
-    expert: 'Immediates are sign-extended in every format except U (already placed in the upper 20 bits).',
+    id: 'imm', label: 'Imm Gen', stage: 'ID',
+    pos: [-4, -2.9, 0], size: [2.0, 0.7, 1.2], color: '#14b8a6',
+    blurb: 'The immediate generator extracts bits from the instruction word and sign-extends them to 32 bits. Each instruction format (I, S, B, U, J) scatters the immediate bits differently.',
+    expert: 'Sign extension replicates bit 31 of the instruction into the upper bits of the immediate. U-type already provides bits [31:12]; J and B-type immediates encode word- and half-word-aligned offsets with bit 0 implicit.',
   },
   alu: {
-    id: 'alu', label: 'ALU', pos: [0.4, 0, 0], size: [1.6, 1.6, 0.9], color: '#ef4444',
-    blurb: 'The arithmetic-logic unit computes the result: add/sub (two\'s complement), bitwise logic, shifts, and comparisons. It also computes effective addresses for loads/stores and the branch comparison.',
-    expert: 'Subtraction is a + (~b) + 1; signed overflow is the XOR of the carry into and out of the MSB.',
+    id: 'alu', label: 'ALU', stage: 'EX',
+    pos: [1.5, 0, 0], size: [2.6, 0.7, 2.4], color: '#ef4444',
+    blurb: 'The arithmetic-logic unit computes the result: addition/subtraction (two\'s complement), bitwise AND/OR/XOR, shifts, and signed/unsigned comparisons. It also computes effective addresses for loads/stores.',
+    expert: 'Subtraction is implemented as a + (~b) + 1 via carry-in. Signed overflow is detected as XOR of carry-into and carry-out of bit 31. The zero flag drives the branch mux. ALU operation is selected by ALUOp + funct3 + funct7.',
   },
   dmem: {
-    id: 'dmem', label: 'Data Mem', pos: [3.6, 0, 0], size: [1.8, 1.3, 0.8], color: '#8b5cf6',
-    blurb: 'Data memory (the L1 D-cache fronting DRAM in real hardware) is read by loads and written by stores. The ALU result supplies the effective address.',
-    expert: 'Loads/stores hit the D-cache; a miss walks down the hierarchy with the latency the cache model would charge.',
+    id: 'dmem', label: 'D-Cache', stage: 'MEM',
+    pos: [6.5, 0, 0], size: [2.4, 0.7, 2.0], color: '#8b5cf6',
+    blurb: 'Data memory (the L1 D-cache in real hardware) is read by load instructions and written by stores. The effective address comes from the ALU; the data to store comes from rs2 via the MEM/WB path.',
+    expert: 'On a cache miss the pipeline stalls for the fill latency (typically 10–200 cycles to DRAM). Write-back + write-allocate is the standard policy for performance. A dirty eviction must first flush the victim line.',
   },
   wb: {
-    id: 'wb', label: 'WB Mux', pos: [6.6, 0, 0], size: [1.2, 1.2, 0.8], color: '#22d3ee',
-    blurb: 'The write-back mux chooses what gets written to rd: the ALU result, loaded data (MemtoReg), or the link address (PC+4) for jal/jalr.',
-    expert: 'MemtoReg selects loaded data over the ALU result on the write-back path.',
+    id: 'wb', label: 'WB Mux', stage: 'WB',
+    pos: [11, 0, 0], size: [1.6, 0.7, 1.2], color: '#22d3ee',
+    blurb: 'The write-back mux selects what value gets written to the destination register: the ALU result for arithmetic, loaded data for lw/lb (MemtoReg), or PC+4 for jal/jalr (link register).',
+    expert: 'MemtoReg is a 2-bit mux select in practice (ALU result / load data / link address). The selected value drives the register file write port on the trailing clock edge.',
   },
 };
 
@@ -66,18 +75,18 @@ export interface Bus {
 }
 
 export const BUSES: Bus[] = [
-  { from: 'pc', to: 'imem', kind: 'pc' },
-  { from: 'imem', to: 'regs', kind: 'data' },
-  { from: 'imem', to: 'control', kind: 'control' },
-  { from: 'imem', to: 'imm', kind: 'data' },
-  { from: 'regs', to: 'alu', kind: 'data' },
-  { from: 'imm', to: 'alu', kind: 'data' },
-  { from: 'control', to: 'alu', kind: 'control' },
-  { from: 'regs', to: 'dmem', kind: 'data' },
-  { from: 'alu', to: 'dmem', kind: 'data' },
-  { from: 'alu', to: 'wb', kind: 'data' },
-  { from: 'dmem', to: 'wb', kind: 'data' },
-  { from: 'wb', to: 'regs', kind: 'data' },
+  { from: 'pc',      to: 'imem',    kind: 'pc'      },
+  { from: 'imem',    to: 'regs',    kind: 'data'    },
+  { from: 'imem',    to: 'control', kind: 'control' },
+  { from: 'imem',    to: 'imm',     kind: 'data'    },
+  { from: 'regs',    to: 'alu',     kind: 'data'    },
+  { from: 'imm',     to: 'alu',     kind: 'data'    },
+  { from: 'control', to: 'alu',     kind: 'control' },
+  { from: 'regs',    to: 'dmem',    kind: 'data'    },
+  { from: 'alu',     to: 'dmem',    kind: 'data'    },
+  { from: 'alu',     to: 'wb',      kind: 'data'    },
+  { from: 'dmem',    to: 'wb',      kind: 'data'    },
+  { from: 'wb',      to: 'regs',    kind: 'data'    },
 ];
 
 export const busId = (b: Bus) => `${b.from}-${b.to}`;
