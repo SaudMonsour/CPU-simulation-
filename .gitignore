@@ -2,3 +2,10 @@ node_modules
 dist
 .vite
 *.local
+
+# Replit-specific (workspace config, not part of the project)
+.replit
+.local/
+.breakpoints
+.upm/
+replit.md
