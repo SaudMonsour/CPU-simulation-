@@ -1,4 +1,4 @@
-import { useRef, useMemo } from 'react';
+import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
@@ -27,34 +27,33 @@ function activity(snap: Snapshot): { units: Set<string>; buses: Set<string> } {
       case 'pc-imem':
       case 'imem-regs':
       case 'imem-control': on(b); break;
-      case 'imem-imm': if (s.aluSrc) on(b); break;
+      case 'imem-imm':     if (s.aluSrc) on(b); break;
       case 'regs-alu':
       case 'control-alu': if (aluActive) on(b); break;
-      case 'imm-alu': if (s.aluSrc) on(b); break;
-      case 'regs-dmem': if (s.memWrite) on(b); break;
-      case 'alu-dmem': if (s.memRead || s.memWrite) on(b); break;
-      case 'alu-wb': if (s.regWrite && !s.memToReg) on(b); break;
-      case 'dmem-wb': if (s.memToReg) on(b); break;
-      case 'wb-regs': if (s.regWrite) on(b); break;
+      case 'imm-alu':     if (s.aluSrc) on(b); break;
+      case 'regs-dmem':   if (s.memWrite) on(b); break;
+      case 'alu-dmem':    if (s.memRead || s.memWrite) on(b); break;
+      case 'alu-wb':      if (s.regWrite && !s.memToReg) on(b); break;
+      case 'dmem-wb':     if (s.memToReg) on(b); break;
+      case 'wb-regs':     if (s.regWrite) on(b); break;
     }
   }
   return { units, buses };
 }
 
-// ─── Colour constants ─────────────────────────────────────────────────────────
-const DATA_COLOR  = '#38e0c8';
-const CTRL_COLOR  = '#f5b942';
-const PC_COLOR    = '#60a5fa';
-const IDLE_COLOR  = '#162035';
+// ─── Colour palette ───────────────────────────────────────────────────────────
+const DATA_COLOR = '#38e0c8';
+const CTRL_COLOR = '#f5b942';
+const PC_COLOR   = '#60a5fa';
+const IDLE_LINE  = '#1e3455';
 
-// ─── Staggered particles along a bus ─────────────────────────────────────────
-function Particle({
-  a, b, color, speed, offset,
-}: {
+// ─── Glow particle (multi-layer additive blending = convincing bloom) ─────────
+function Particle({ a, b, color, speed, offset }: {
   a: Vec3; b: Vec3; color: string; speed: number; offset: number;
 }) {
-  const ref = useRef<THREE.Mesh>(null);
-  const t = useRef(offset);
+  const ref = useRef<THREE.Group>(null);
+  const t   = useRef(offset);
+
   useFrame((_, dt) => {
     t.current = (t.current + dt * speed) % 1;
     const k = t.current;
@@ -66,77 +65,119 @@ function Particle({
       );
     }
   });
+
   return (
-    <mesh ref={ref}>
-      <sphereGeometry args={[0.09, 10, 10]} />
-      <meshBasicMaterial color={color} toneMapped={false} />
-    </mesh>
+    <group ref={ref}>
+      {/* Bright solid core */}
+      <mesh>
+        <sphereGeometry args={[0.09, 8, 8]} />
+        <meshBasicMaterial color={color} />
+      </mesh>
+      {/* Inner glow halo */}
+      <mesh>
+        <sphereGeometry args={[0.22, 8, 8]} />
+        <meshBasicMaterial
+          color={color} transparent opacity={0.38}
+          blending={THREE.AdditiveBlending} depthWrite={false}
+        />
+      </mesh>
+      {/* Mid glow halo */}
+      <mesh>
+        <sphereGeometry args={[0.44, 8, 8]} />
+        <meshBasicMaterial
+          color={color} transparent opacity={0.14}
+          blending={THREE.AdditiveBlending} depthWrite={false}
+        />
+      </mesh>
+      {/* Soft wide glow */}
+      <mesh>
+        <sphereGeometry args={[0.72, 8, 8]} />
+        <meshBasicMaterial
+          color={color} transparent opacity={0.05}
+          blending={THREE.AdditiveBlending} depthWrite={false}
+        />
+      </mesh>
+    </group>
   );
 }
 
+// ─── Bus ──────────────────────────────────────────────────────────────────────
 function DataBus({ bus, active }: { bus: Bus; active: boolean }) {
-  const a = UNITS[bus.from].pos;
-  const b = UNITS[bus.to].pos;
+  const a     = UNITS[bus.from].pos;
+  const b     = UNITS[bus.to].pos;
   const color = bus.kind === 'control' ? CTRL_COLOR : bus.kind === 'pc' ? PC_COLOR : DATA_COLOR;
-  const speed = bus.kind === 'control' ? 0.6 : 0.9;
-  const offsets = [0, 0.34, 0.67];
+  const speed = bus.kind === 'control' ? 0.55 : 0.85;
 
   return (
     <group>
+      {/* Bus line — glow overlay when active */}
       <Line
         points={[a, b]}
-        color={active ? color : IDLE_COLOR}
-        lineWidth={active ? 2.2 : 1}
+        color={active ? color : IDLE_LINE}
+        lineWidth={active ? 2.5 : 1.2}
         transparent
-        opacity={active ? 1.0 : 0.5}
+        opacity={active ? 1 : 0.5}
       />
-      {active && offsets.map((off, i) => (
+      {active && (
+        <Line
+          points={[a, b]}
+          color={color}
+          lineWidth={6}
+          transparent
+          opacity={0.07}
+        />
+      )}
+      {/* 4 staggered particles */}
+      {active && [0, 0.25, 0.5, 0.75].map((off, i) => (
         <Particle key={i} a={a} b={b} color={color} speed={speed} offset={off} />
       ))}
     </group>
   );
 }
 
-// ─── Chip decorative circuit traces ──────────────────────────────────────────
-function ChipTraces({ w, d, color }: { w: number; d: number; color: string }) {
-  const hw = w / 2 - 0.18;
-  const hd = d / 2 - 0.18;
-  const segs = useMemo(() => [
-    [[-hw, 0, 0], [hw, 0, 0]],
-    [[0, 0, -hd], [0, 0, hd]],
-    [[-hw * 0.5, 0, -hd * 0.5], [-hw * 0.5, 0, hd * 0.5]],
-    [[hw * 0.5, 0, -hd * 0.5], [hw * 0.5, 0, hd * 0.5]],
-  ] as [number, number, number][][], [hw, hd]);
+// ─── Chip interior grid (transistor-like dots) ─────────────────────────────
+function ChipInterior({ w, d, color, active }: { w: number; d: number; color: string; active: boolean }) {
+  const mat = useRef<THREE.MeshStandardMaterial>(null);
+  const t   = useRef(Math.random() * Math.PI * 2);
 
+  useFrame((_, dt) => {
+    t.current += dt * (active ? 2.2 : 0.8);
+    if (mat.current) {
+      const base = active ? 1.0 : 0.35;
+      mat.current.emissiveIntensity = base + Math.sin(t.current) * (active ? 0.4 : 0.12);
+    }
+  });
+
+  // Small cross-pattern lines on top face
+  const hw = w / 2 - 0.2, hd = d / 2 - 0.2;
   return (
     <group>
-      {segs.map((pts, i) => (
-        <Line
-          key={i}
-          points={pts}
-          color={color}
-          lineWidth={0.6}
-          transparent
-          opacity={0.22}
+      {/* Horizontal trace */}
+      <Line
+        points={[[-hw, 0, 0] as Vec3, [hw, 0, 0] as Vec3]}
+        color={color} lineWidth={0.8} transparent opacity={0.25}
+      />
+      {/* Vertical trace */}
+      <Line
+        points={[[0, 0, -hd] as Vec3, [0, 0, hd] as Vec3]}
+        color={color} lineWidth={0.8} transparent opacity={0.25}
+      />
+      {/* Center node */}
+      <mesh>
+        <cylinderGeometry args={[0.1, 0.1, 0.08, 8]} />
+        <meshStandardMaterial
+          ref={mat}
+          color={color} emissive={color}
+          emissiveIntensity={0.35}
+          metalness={0.9} roughness={0.1}
         />
-      ))}
-    </group>
-  );
-}
-
-// ─── Solder bump pads (corner dots) ──────────────────────────────────────────
-function SolderBumps({ w, d, color }: { w: number; d: number; color: string }) {
-  const hw = w / 2 - 0.12;
-  const hd = d / 2 - 0.12;
-  const corners: [number, number, number][] = [
-    [-hw, 0, -hd], [hw, 0, -hd], [-hw, 0, hd], [hw, 0, hd],
-  ];
-  return (
-    <group>
-      {corners.map((pos, i) => (
+      </mesh>
+      {/* Corner pads */}
+      {([[-hw * 0.6, 0, -hd * 0.6], [hw * 0.6, 0, -hd * 0.6],
+         [-hw * 0.6, 0,  hd * 0.6], [hw * 0.6, 0,  hd * 0.6]] as Vec3[]).map((pos, i) => (
         <mesh key={i} position={pos}>
-          <cylinderGeometry args={[0.07, 0.07, 0.06, 8]} />
-          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.5} metalness={0.9} roughness={0.1} />
+          <cylinderGeometry args={[0.06, 0.06, 0.06, 6]} />
+          <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.8} metalness={0.9} roughness={0.1} />
         </mesh>
       ))}
     </group>
@@ -144,39 +185,48 @@ function SolderBumps({ w, d, color }: { w: number; d: number; color: string }) {
 }
 
 // ─── CPU block (chip) ─────────────────────────────────────────────────────────
-function Unit({
-  meta, active, selected, onSelect,
-}: {
+function Unit({ meta, active, selected, onSelect }: {
   meta: UnitMeta; active: boolean; selected: boolean; onSelect: (id: string) => void;
 }) {
   const bodyMat  = useRef<THREE.MeshStandardMaterial>(null);
-  const glowMat  = useRef<THREE.MeshBasicMaterial>(null);
-  const ringRef  = useRef<THREE.Mesh>(null);
+  const glow1    = useRef<THREE.MeshBasicMaterial>(null);
+  const glow2    = useRef<THREE.MeshBasicMaterial>(null);
+  const glow3    = useRef<THREE.MeshBasicMaterial>(null);
   const ringMat  = useRef<THREE.MeshBasicMaterial>(null);
-  const frameRef = useRef<number>(0);
+  const frameRef = useRef(Math.random() * Math.PI * 2); // unique phase per unit
 
   useFrame((_, dt) => {
     frameRef.current += dt;
+    const time   = frameRef.current;
+    const phase  = meta.pos[0] * 0.35; // spatial phase offset
 
+    // Body emissive — breathing idle + blazing when active
     if (bodyMat.current) {
-      const target = active ? 1.4 : 0.08;
-      bodyMat.current.emissiveIntensity +=
-        (target - bodyMat.current.emissiveIntensity) * 0.14;
+      const idleBase = 0.55 + Math.sin(time * 1.3 + phase) * 0.18;
+      const target   = active ? 2.5 : idleBase;
+      const speed    = active ? 0.18 : 0.04;
+      bodyMat.current.emissiveIntensity += (target - bodyMat.current.emissiveIntensity) * speed;
     }
-    if (glowMat.current) {
-      const target = active ? 0.18 : 0;
-      glowMat.current.opacity +=
-        (target - glowMat.current.opacity) * 0.1;
+
+    // Glow halos — additive blending layers
+    const idleG1 = 0.14 + Math.sin(time * 1.3 + phase) * 0.05;
+    const idleG2 = 0.06 + Math.sin(time * 1.3 + phase) * 0.02;
+    const idleG3 = 0.02 + Math.sin(time * 1.3 + phase) * 0.01;
+    if (glow1.current) {
+      const t = active ? 0.52 : idleG1;
+      glow1.current.opacity += (t - glow1.current.opacity) * 0.12;
     }
-    if (ringRef.current && ringMat.current) {
-      const target = active ? 0.55 : 0;
-      ringMat.current.opacity +=
-        (target - ringMat.current.opacity) * 0.09;
-      // Pulse scale when active
-      if (active) {
-        const pulse = 1 + Math.sin(frameRef.current * 3.5) * 0.04;
-        ringRef.current.scale.set(pulse, 1, pulse);
-      }
+    if (glow2.current) {
+      const t = active ? 0.22 : idleG2;
+      glow2.current.opacity += (t - glow2.current.opacity) * 0.10;
+    }
+    if (glow3.current) {
+      const t = active ? 0.09 : idleG3;
+      glow3.current.opacity += (t - glow3.current.opacity) * 0.08;
+    }
+    if (ringMat.current) {
+      const t = active ? 0.55 : 0.08 + Math.sin(time * 1.3 + phase) * 0.03;
+      ringMat.current.opacity += (t - ringMat.current.opacity) * 0.10;
     }
   });
 
@@ -184,73 +234,65 @@ function Unit({
 
   return (
     <group position={meta.pos}>
-      {/* Chip substrate shadow pad */}
-      <mesh position={[0, -h / 2 - 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[w + 0.3, d + 0.3]} />
-        <meshBasicMaterial color="#000000" transparent opacity={0.35} />
+      {/* Ground shadow */}
+      <mesh position={[0, -h / 2 - 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[w + 0.5, d + 0.5]} />
+        <meshBasicMaterial color="#000000" transparent opacity={0.5} depthWrite={false} />
       </mesh>
 
       {/* Main chip body */}
-      <mesh
-        onClick={(e) => { e.stopPropagation(); onSelect(meta.id); }}
-        castShadow
-      >
+      <mesh onClick={(e) => { e.stopPropagation(); onSelect(meta.id); }} castShadow>
         <boxGeometry args={[w, h, d]} />
         <meshStandardMaterial
           ref={bodyMat}
           color={meta.color}
           emissive={meta.color}
-          emissiveIntensity={0.08}
-          metalness={0.55}
-          roughness={0.35}
+          emissiveIntensity={0.55}
+          metalness={0.5}
+          roughness={0.4}
         />
       </mesh>
 
-      {/* Top glow plane */}
-      <mesh position={[0, h / 2 + 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[w * 0.88, d * 0.88]} />
-        <meshBasicMaterial
-          ref={glowMat}
-          color={meta.color}
-          transparent
-          opacity={0}
-          side={THREE.DoubleSide}
-          toneMapped={false}
-        />
-      </mesh>
+      {/* Top face glow layers (additive blending = real glow look) */}
+      <group position={[0, h / 2 + 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh>
+          <planeGeometry args={[w * 1.2, d * 1.2]} />
+          <meshBasicMaterial ref={glow1} color={meta.color} transparent opacity={0.14}
+            blending={THREE.AdditiveBlending} depthWrite={false} />
+        </mesh>
+        <mesh>
+          <planeGeometry args={[w * 2.2, d * 2.2]} />
+          <meshBasicMaterial ref={glow2} color={meta.color} transparent opacity={0.06}
+            blending={THREE.AdditiveBlending} depthWrite={false} />
+        </mesh>
+        <mesh>
+          <planeGeometry args={[w * 3.8, d * 3.8]} />
+          <meshBasicMaterial ref={glow3} color={meta.color} transparent opacity={0.02}
+            blending={THREE.AdditiveBlending} depthWrite={false} />
+        </mesh>
+      </group>
+
+      {/* Chip interior details */}
+      <group position={[0, h / 2 + 0.04, 0]}>
+        <ChipInterior w={w} d={d} color={meta.color} active={active} />
+      </group>
 
       {/* Pulse ring */}
-      <mesh ref={ringRef} position={[0, h / 2 + 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[Math.max(w, d) * 0.52, Math.max(w, d) * 0.62, 36]} />
-        <meshBasicMaterial
-          ref={ringMat}
-          color={meta.color}
-          transparent
-          opacity={0}
-          side={THREE.DoubleSide}
-          toneMapped={false}
-        />
+      <mesh position={[0, h / 2 + 0.03, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[Math.max(w, d) * 0.55, Math.max(w, d) * 0.68, 40]} />
+        <meshBasicMaterial ref={ringMat} color={meta.color} transparent opacity={0.08}
+          blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
-
-      {/* Circuit traces on top face */}
-      <group position={[0, h / 2 + 0.02, 0]}>
-        <ChipTraces w={w} d={d} color={meta.color} />
-      </group>
-
-      {/* Solder bumps */}
-      <group position={[0, h / 2 + 0.04, 0]}>
-        <SolderBumps w={w} d={d} color={meta.color} />
-      </group>
 
       {/* Selection wireframe */}
       {selected && (
         <mesh>
-          <boxGeometry args={[w + 0.16, h + 0.16, d + 0.16]} />
-          <meshBasicMaterial color="#ffffff" wireframe transparent opacity={0.7} />
+          <boxGeometry args={[w + 0.18, h + 0.18, d + 0.18]} />
+          <meshBasicMaterial color="#ffffff" wireframe transparent opacity={0.8} />
         </mesh>
       )}
 
-      {/* Label above */}
+      {/* 3D label */}
       <Html
         position={[0, h / 2 + 0.55, 0]}
         center
@@ -268,7 +310,7 @@ function Unit({
   );
 }
 
-// ─── Main Datapath component ──────────────────────────────────────────────────
+// ─── Main Datapath ────────────────────────────────────────────────────────────
 export function Datapath() {
   const snapshot = useSim((s) => s.snapshot);
   const selected = useSim((s) => s.selected);
@@ -277,16 +319,9 @@ export function Datapath() {
 
   return (
     <group>
-      {/* Buses first so they render behind chips */}
       {BUSES.map((b) => (
-        <DataBus
-          key={busId(b)}
-          bus={b}
-          active={buses.has(busId(b))}
-        />
+        <DataBus key={busId(b)} bus={b} active={buses.has(busId(b))} />
       ))}
-
-      {/* CPU blocks */}
       {Object.values(UNITS).map((m) => (
         <Unit
           key={m.id}

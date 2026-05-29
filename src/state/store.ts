@@ -53,7 +53,7 @@ export const useSim = create<SimState>((set, get) => ({
   error: null,
   snapshot: preview(),
   running: false,
-  speedHz: 2,
+  speedHz: 3,
   retired: 0,
   selected: null,
   memBase: 0,

@@ -4,21 +4,23 @@ import { Datapath } from './Datapath';
 import { PipelineZones } from './PipelineZones';
 import { useSim } from '../state/store';
 
-// Fake bloom via carefully-tuned point lights per stage.
-// Each stage colour-matches its unit, creating visible halos on the dark background.
+// Per-stage point lights give each zone its own colour halo — the closest thing
+// to bloom without the postprocessing dependency.
 function StageLights() {
   return (
     <>
       {/* IF — blue */}
-      <pointLight position={[-11, 3.5, 0]} intensity={8}  color="#3b82f6" distance={10} decay={2} />
+      <pointLight position={[-10, 4.5, 1]}  intensity={18} color="#3b82f6" distance={13} decay={2} />
       {/* ID — green */}
-      <pointLight position={[-4,  3.5, 0]} intensity={7}  color="#10b981" distance={11} decay={2} />
+      <pointLight position={[-4,  4.5, 1]}  intensity={16} color="#10b981" distance={14} decay={2} />
       {/* EX — red */}
-      <pointLight position={[1.5, 3.5, 0]} intensity={9}  color="#ef4444" distance={9}  decay={2} />
+      <pointLight position={[1.5, 4.5, 1]}  intensity={20} color="#ef4444" distance={12} decay={2} />
       {/* MEM — purple */}
-      <pointLight position={[6.5, 3.5, 0]} intensity={7}  color="#8b5cf6" distance={9}  decay={2} />
+      <pointLight position={[6.5, 4.5, 1]}  intensity={16} color="#8b5cf6" distance={12} decay={2} />
       {/* WB — cyan */}
-      <pointLight position={[11,  3.5, 0]} intensity={7}  color="#22d3ee" distance={8}  decay={2} />
+      <pointLight position={[11,  4.5, 1]}  intensity={16} color="#22d3ee" distance={10} decay={2} />
+      {/* Top fill — warm white */}
+      <pointLight position={[0,   10,  0]}  intensity={5}  color="#c8d8ff" distance={40} decay={2} />
     </>
   );
 }
@@ -29,48 +31,48 @@ export function Scene() {
   return (
     <Canvas
       dpr={[1, 2]}
-      camera={{ position: [0, 13, 28], fov: 46 }}
+      camera={{ position: [0, 14, 26], fov: 48 }}
       shadows
-      gl={{ antialias: true, alpha: false }}
+      gl={{ antialias: true, alpha: false, toneMappingExposure: 1.2 }}
       onPointerMissed={() => select(null)}
     >
-      <color attach="background" args={['#050810']} />
-      <fog attach="fog" args={['#050810', 28, 60]} />
+      <color attach="background" args={['#040710']} />
+      <fog attach="fog" args={['#040710', 32, 65]} />
 
-      {/* Ambient fill — keep dark for contrast */}
-      <ambientLight intensity={0.2} />
+      {/* Very dark ambient — emissive does the heavy lifting */}
+      <ambientLight intensity={0.25} color="#8090c0" />
 
-      {/* Key directional light */}
+      {/* Top-right key light */}
       <directionalLight
-        position={[5, 18, 12]}
-        intensity={0.65}
+        position={[8, 20, 14]}
+        intensity={0.5}
         color="#c8d8ff"
         castShadow
         shadow-mapSize={[1024, 1024]}
       />
 
-      {/* Per-stage accent point lights */}
+      {/* Per-stage accent halos */}
       <StageLights />
 
-      {/* Floor grid */}
+      {/* PCB floor grid */}
       <gridHelper
-        args={[80, 80, '#0f1e35', '#0a1528']}
+        args={[90, 90, '#0d1c30', '#081525']}
         position={[0, -0.44, 0]}
       />
 
-      {/* Pipeline stage zone backgrounds + latch dividers */}
+      {/* Pipeline stage zones + pipeline register latches */}
       <PipelineZones />
 
-      {/* All CPU blocks + animated buses */}
+      {/* CPU units + animated data buses */}
       <Datapath />
 
       <OrbitControls
         makeDefault
         enablePan
-        target={[0, 0, 0]}
-        minDistance={8}
-        maxDistance={55}
-        maxPolarAngle={Math.PI / 2.1}
+        target={[0, 0.5, 0]}
+        minDistance={7}
+        maxDistance={60}
+        maxPolarAngle={Math.PI / 2.05}
       />
     </Canvas>
   );
